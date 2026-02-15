@@ -144,8 +144,8 @@ void loop() {
  
         if (abs(error) > 20) {
             // TWEAK: Lower 0.85 to 0.60-0.70 if the bot flies off the track on tight loops
-            currentLeftPWM *= 0.85;
-            currentRightPWM *= 0.85;
+            currentLeftPWM *= 0.60;
+            currentRightPWM *= 0.60;
         }
         
         moveStraight(currentLeftPWM, currentRightPWM);
