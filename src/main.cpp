@@ -29,6 +29,7 @@ void drawCountNum(int n) {
 }
 
 void loop() {
+    // UPDATES OLED DISPLAY AND MENU NAVIGATION
     handleUI();
 
     if (currentPage == COUNTDOWN) {
@@ -38,35 +39,42 @@ void loop() {
     }
 
     if (currentPage == RUNNING) {
+        // EMERGENCY STOP BUTTON
         if (analogRead(BTN_BACK_PIN) > 600) {
             stopMotors(); setLapTime(millis() - startTime);
             tone(PIN_BUZZER, 1000, 100); currentPage = REPORT; drawReport(); return;
         }
 
+        // READ SENSORS AND CALCULATE CURRENT ERROR
         uint8_t bits = readSensorBits();
         int error = calculateError(bits);
         int activeCount = 0;
         for(int i=0; i<8; i++) if ((bits >> i) & 1) activeCount++;
         activeCountDebug = activeCount; 
 
-        // 1. UNIFIED 80ms STOP BOX DETECTION
+        // 1. STOP BOX: Detects the finish box and stops the robot.
         if (activeCount >= 7) { 
              if (stopBoxTimer == 0) stopBoxTimer = millis();
+             // TWEAK: Lower 80 to 40-50 if it ignores the finish box at high speeds
              if (millis() - stopBoxTimer > 80) { 
                 brakeMotors(); delay(100); stopMotors(); 
                 setLapTime(millis() - startTime);
                 tone(PIN_BUZZER, 4000, 800); currentPage = REPORT; drawReport(); return;
              }
-        } else { stopBoxTimer = 0; }
+             moveStraight(getSpeed(), getSpeed());
+             return; 
+        } else { 
+             stopBoxTimer = 0; 
+        }
 
-        // 2. CHECKPOINT DETECTION
+        // 2. CHECKPOINT: Detects horizontal intersections to start the glide timer.
         if (activeCount >= 5) { 
             lastCrossroadTime = millis(); 
             checkpointActive = true;
             digitalWrite(PIN_LED, HIGH); 
         }
 
-        // 3. AGGRESSIVE MEMORY 
+        // 3. MEMORY: Logs the last known line position (left or right) before it vanishes.
         int leftW = ((bits >> 7) & 1) + ((bits >> 6) & 1) + ((bits >> 5) & 1);
         int rightW = ((bits >> 2) & 1) + ((bits >> 1) & 1) + ((bits >> 0) & 1);
         if (bits != 0 && activeCount <= 4) {
@@ -74,30 +82,29 @@ void loop() {
             else if (rightW > leftW) errorDir = 1;
         }
 
-        // ==========================================
-        // 4. FORCED TRUE SPIN (Acute Angle Fix)
-        // ==========================================
+        // 4.Executes a zero-radius turn when the line is completely lost.
         if (bits == 0) { 
             int pivotPower = 255; 
             if (errorDir == 0) {
-                if (lastError > 0) errorDir = 1;
-                else if (lastError < 0) errorDir = -1;
+                // TWEAK: Increase 5 to 10-15 if it falsely spins on straight gaps
+                if (lastError > 5) errorDir = 1;
+                else if (lastError < -5) errorDir = -1;
+                else if (millis() - lastCrossroadTime < 150) {
+                    errorDir = -1; 
+                }
             }
 
             if (errorDir != 0) { 
-                brakeMotors(); delay(20);
+                brakeMotors(); 
+                // TWEAK: Increase 50 to 60-70 if the bot skids forward before spinning
+                delay(50); 
                 
-                // EXPLICIT REVERSE COMMANDS: One wheel forward (+), one wheel backward (-)
                 if (errorDir == 1) { 
                     moveStraight(pivotPower, -pivotPower); delay(40); 
-                    while((readSensorBits() & 0b00111100) == 0) { 
-                        moveStraight(pivotPower, -pivotPower); 
-                    }
+                    while((readSensorBits() & 0b00111100) == 0) { moveStraight(pivotPower, -pivotPower); }
                 } else { 
                     moveStraight(-pivotPower, pivotPower); delay(40);
-                    while((readSensorBits() & 0b00111100) == 0) { 
-                        moveStraight(-pivotPower, pivotPower); 
-                    }
+                    while((readSensorBits() & 0b00111100) == 0) { moveStraight(-pivotPower, pivotPower); }
                 }
                 
                 brakeMotors(); delay(60); 
@@ -108,7 +115,8 @@ void loop() {
             return; 
         }
 
-        // 5. FULL SPEED GLIDE
+        // 5.Ignores sensor data briefly to skip over horizontal intersections.
+        // TWEAK: Lower 30 to 15-20 if it overshoots the line after passing a crossroad
         if (millis() - lastCrossroadTime < 30) {
             moveStraight(getSpeed(), getSpeed()); 
             return; 
@@ -117,41 +125,29 @@ void loop() {
             digitalWrite(PIN_LED, LOW);
         }
 
-        // ==========================================
-        // 6. DYNAMIC PID (The "Inner Wheel Reverse" Fix)
-        // ==========================================
+        // 6. PID STEERING: Calculates the motor adjustment based on current and past error.
         P = error;
         int currentDiff = error - lastError;
 
-        if (currentDiff != 0) {
-            delay(2); 
-        }
+        if (currentDiff != 0) delay(2); 
         
         D = currentDiff;
         lastError = error;
 
         currentPID = (getKp() * P) + (getKd() * D);
         
-        // CRITICAL FIX: Allow deep reverse on sharp curves
-        if (abs(error) > 15) {
-            // High error = Sharp Turn. Allow PID to max out so inner wheel goes negative (reverse)
-            currentPID = constrain(currentPID, -255, 255);
-        } else {
-            // Low error = Straightaway. Clamp to base speed to prevent straight-line jitter
-            currentPID = constrain(currentPID, -getSpeed(), getSpeed());
-        }
+        if (abs(error) > 15) currentPID = constrain(currentPID, -255, 255);
+        else currentPID = constrain(currentPID, -getSpeed(), getSpeed());
         
         currentLeftPWM = getSpeed() + currentPID; 
         currentRightPWM = getSpeed() - currentPID;
-
-        // Tight loop dampener
+ 
         if (abs(error) > 20) {
-            currentLeftPWM *= 0.70;
-            currentRightPWM *= 0.70;
+            // TWEAK: Lower 0.85 to 0.60-0.70 if the bot flies off the track on tight loops
+            currentLeftPWM *= 0.85;
+            currentRightPWM *= 0.85;
         }
         
-        // Because your motors.cpp moveStraight() handles negatives beautifully, 
-        // the inner wheel will automatically reverse itself here.
         moveStraight(currentLeftPWM, currentRightPWM);
     }
 }

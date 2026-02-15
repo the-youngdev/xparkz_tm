@@ -22,14 +22,17 @@ bool isEditing = false;
 const char* tuningLabels[] = {"Kp", "Ki", "Kd", "Sp", "ATh", "DTh"};
 
 bool lastUp=HIGH, lastDown=HIGH, lastSel=HIGH, lastBack=LOW;
-const int DEBOUNCE = 200;
 unsigned long lastPress = 0;
 unsigned long lastDrawTime = 0;
+
+// TWEAK: Lower 200 to 100-150 if your button presses feel too slow to register.
+const int DEBOUNCE = 200;
 
 void drawMenu(); void drawTuning(); void drawSensors(); void drawReport(); void drawCalibrate();
 void beep() { tone(PIN_BUZZER, 2000, 50); }
 void setLapTime(unsigned long t) { finalLapTime = t; }
 
+// EEPROM MANAGEMENT: Loads and saves tuning values so they persist after power off.
 void loadSettings() {
     if (EEPROM.read(0) != 99) {
         Kp = DEFAULT_KP; Ki = DEFAULT_KI; Kd = DEFAULT_KD; speedVal = DEFAULT_SPEED;
@@ -47,6 +50,7 @@ void saveSettings() {
     EEPROM.put(10, analogThr); EEPROM.put(15, adsThr);
 }
 
+// UI INITIALIZATION: Sets up button pins and turns on the OLED display.
 void setupUI() {
     pinMode(BTN_UP, INPUT_PULLUP); pinMode(BTN_DOWN, INPUT_PULLUP); pinMode(BTN_SELECT, INPUT_PULLUP);
     u8x8.begin(); u8x8.setFont(u8x8_font_chroma48medium8_r);
@@ -54,6 +58,7 @@ void setupUI() {
     drawMenu();
 }
 
+// UI STATE MACHINE: Handles button presses, debouncing, and switching screens.
 void handleUI() {
     if (currentPage == RUNNING || currentPage == COUNTDOWN) return;
 
@@ -89,16 +94,18 @@ void handleUI() {
             if (!sel && lastSel) { beep(); isEditing = !isEditing; drawTuning(); }
             if (!up && lastUp) {
                 if (isEditing) {
+                    // TWEAK: Change these numbers (+1, +5, +10) to adjust how fast tuning increments.
                     if (tuningCursor==0) Kp++; else if(tuningCursor==1) Ki++;
-                    else if(tuningCursor==2) Kd+=5; else if(tuningCursor==3) speedVal+=5;
+                    else if(tuningCursor==2) Kd++; else if(tuningCursor==3) speedVal+=5;
                     else if(tuningCursor==4) analogThr+=10; else adsThr+=100;
                 } else if(tuningCursor>0) tuningCursor--;
                 drawTuning();
             }
             if (!down && lastDown) {
                 if (isEditing) {
+                    // TWEAK: Change these numbers (-1, -5, -10) to adjust how fast tuning decrements.
                     if (tuningCursor==0) Kp--; else if(tuningCursor==1) Ki--;
-                    else if(tuningCursor==2) Kd-=5; else if(tuningCursor==3) speedVal-=5;
+                    else if(tuningCursor==2) Kd--; else if(tuningCursor==3) speedVal-=5;
                     else if(tuningCursor==4) analogThr-=10; else adsThr-=100;
                 } else if(tuningCursor<5) tuningCursor++; 
                 drawTuning();
@@ -118,6 +125,7 @@ void handleUI() {
     lastUp=up; lastDown=down; lastSel=sel; lastBack=back;
 }
 
+// DRAW FUNCTIONS: Renders the text and menus to the OLED screen.
 void drawMenu() {
     u8x8.clear();
     for(int i=0; i<4; i++) {
@@ -167,7 +175,9 @@ extern int currentRightPWM;
 extern int activeCountDebug;
 extern bool checkpointActive;
 
+// LIVE SENSOR DEBUG: Visualizes sensor states, memory direction, and active PID output.
 void drawSensors() {
+    // TWEAK: Lower 150 to 50-100 if you want the OLED to refresh faster during sensor testing.
     if (millis() - lastDrawTime < 150) return;
     lastDrawTime = millis();
     
@@ -178,7 +188,6 @@ void drawSensors() {
     for(int i=0; i<8; i++) if((bits >> i) & 1) active++;
     activeCountDebug = active;
 
-    // Mirrored Dry-Run Shape Logic
     bool farLeft = (bits & 0b11100000) > 0;
     bool farRight = (bits & 0b00000111) > 0;
     bool center = (bits & 0b00011000) > 0;
