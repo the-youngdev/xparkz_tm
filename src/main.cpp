@@ -66,7 +66,7 @@ void loop() {
             digitalWrite(PIN_LED, HIGH); 
         }
 
-        // 3. AGGRESSIVE MEMORY (Directional Lock)
+        // 3. AGGRESSIVE MEMORY 
         int leftW = ((bits >> 7) & 1) + ((bits >> 6) & 1) + ((bits >> 5) & 1);
         int rightW = ((bits >> 2) & 1) + ((bits >> 1) & 1) + ((bits >> 0) & 1);
         if (bits != 0 && activeCount <= 4) {
@@ -74,9 +74,11 @@ void loop() {
             else if (rightW > leftW) errorDir = 1;
         }
 
-        // 4. FORCED PIVOT (Acute Turn Fix)
+        // ==========================================
+        // 4. FORCED TRUE SPIN (Acute Angle Fix)
+        // ==========================================
         if (bits == 0) { 
-            int pivotPower = 160; 
+            int pivotPower = 255; 
             if (errorDir == 0) {
                 if (lastError > 0) errorDir = 1;
                 else if (lastError < 0) errorDir = -1;
@@ -84,13 +86,20 @@ void loop() {
 
             if (errorDir != 0) { 
                 brakeMotors(); delay(20);
-                if (errorDir == 1) {
-                    turnCW(pivotPower); delay(40); 
-                    while((readSensorBits() & 0b00111100) == 0) { turnCW(pivotPower); }
-                } else {
-                    turnCCW(pivotPower); delay(40);
-                    while((readSensorBits() & 0b00111100) == 0) { turnCCW(pivotPower); }
+                
+                // EXPLICIT REVERSE COMMANDS: One wheel forward (+), one wheel backward (-)
+                if (errorDir == 1) { 
+                    moveStraight(pivotPower, -pivotPower); delay(40); 
+                    while((readSensorBits() & 0b00111100) == 0) { 
+                        moveStraight(pivotPower, -pivotPower); 
+                    }
+                } else { 
+                    moveStraight(-pivotPower, pivotPower); delay(40);
+                    while((readSensorBits() & 0b00111100) == 0) { 
+                        moveStraight(-pivotPower, pivotPower); 
+                    }
                 }
+                
                 brakeMotors(); delay(60); 
                 lastError = 0; errorDir = 0; 
                 return;
@@ -99,7 +108,7 @@ void loop() {
             return; 
         }
 
-        // 5. FULL SPEED GLIDE (Crossroad Noise Skip)
+        // 5. FULL SPEED GLIDE
         if (millis() - lastCrossroadTime < 30) {
             moveStraight(getSpeed(), getSpeed()); 
             return; 
@@ -108,29 +117,41 @@ void loop() {
             digitalWrite(PIN_LED, LOW);
         }
 
-        // 6. STABILIZED PID (Anti-Jitter)
+        // ==========================================
+        // 6. DYNAMIC PID (The "Inner Wheel Reverse" Fix)
+        // ==========================================
         P = error;
         int currentDiff = error - lastError;
 
         if (currentDiff != 0) {
-            delay(2); // Motor-settling pause
+            delay(2); 
         }
         
         D = currentDiff;
         lastError = error;
 
         currentPID = (getKp() * P) + (getKd() * D);
-        currentPID = constrain(currentPID, -getSpeed(), getSpeed()); // Anti-reverse
+        
+        // CRITICAL FIX: Allow deep reverse on sharp curves
+        if (abs(error) > 15) {
+            // High error = Sharp Turn. Allow PID to max out so inner wheel goes negative (reverse)
+            currentPID = constrain(currentPID, -255, 255);
+        } else {
+            // Low error = Straightaway. Clamp to base speed to prevent straight-line jitter
+            currentPID = constrain(currentPID, -getSpeed(), getSpeed());
+        }
         
         currentLeftPWM = getSpeed() + currentPID; 
         currentRightPWM = getSpeed() - currentPID;
 
-        // TIGHT LOOP DAMPENING: Prevents overshooting at high speeds
+        // Tight loop dampener
         if (abs(error) > 20) {
-            currentLeftPWM *= 0.85;
-            currentRightPWM *= 0.85;
+            currentLeftPWM *= 0.70;
+            currentRightPWM *= 0.70;
         }
         
+        // Because your motors.cpp moveStraight() handles negatives beautifully, 
+        // the inner wheel will automatically reverse itself here.
         moveStraight(currentLeftPWM, currentRightPWM);
     }
 }
