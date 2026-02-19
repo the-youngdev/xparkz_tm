@@ -142,7 +142,7 @@ void loop() {
         currentLeftPWM = getSpeed() + currentPID; 
         currentRightPWM = getSpeed() - currentPID;
  
-        if (abs(error) > 20) {
+        if (abs(error) > 20) { //tweak to 30 for smoother steering, or 15 for sharper turns
             // TWEAK: Lower 0.85 to 0.60-0.70 if the bot flies off the track on tight loops
             currentLeftPWM *= 0.60;
             currentRightPWM *= 0.60;
